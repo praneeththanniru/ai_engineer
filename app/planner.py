@@ -1,64 +1,65 @@
-from app.prompts import SYSTEM_PROMPT
+import os
 
 
 class Planner:
+    """
+    Production Planner
+    Generates file plan from task
+    """
 
     def __init__(self, memory):
-
-        # Inject memory from agent
         self.memory = memory
 
-    # =====================================
-    # PLAN FUNCTION
-    # =====================================
-    def plan(self):
+    # ==========================================
+    # PLAN METHOD
+    # ==========================================
 
+    def plan(self, task: str):
         """
-        Generates a structured file plan.
-        Uses stored task from memory.
+        Accept task as input.
+        Generate project files dynamically.
         """
-
-        task = self.memory.get("task", "")
 
         if not task:
-            print("❌ No task found in memory.")
-            return None
+            task = "Build default fastapi project"
 
-        print("\n🧠 Generating Plan for Task:")
+        print("\n🧠 Task Received:")
         print(task)
-
-        # ==============================
-        # Simple Smart Rule-Based Planner
-        # ==============================
 
         files = []
 
-        # Always generate main app
-        files.append({
-            "path": "main.py",
-            "content": self.generate_main(task)
-        })
+        # ✅ Detect FastAPI project automatically
+        if "/health" in task or "/metrics" in task or "fastapi" in task:
+            files.append(
+                {
+                    "path": "main.py",
+                    "content": self.generate_fastapi(),
+                }
+            )
 
-        # Always generate requirements
-        files.append({
-            "path": "requirements.txt",
-            "content": "fastapi\nuvicorn\nrequests"
-        })
+            files.append(
+                {
+                    "path": "requirements.txt",
+                    "content": "fastapi\nuvicorn\nrequests",
+                }
+            )
 
-        # Always generate README
-        files.append({
-            "path": "README.md",
-            "content": f"# Auto Generated Project\n\nTask:\n{task}"
-        })
+            files.append(
+                {
+                    "path": "README.md",
+                    "content": "# Auto Generated FastAPI Project",
+                }
+            )
 
         return {"files": files}
 
-    # =====================================
-    # GENERATE MAIN FILE
-    # =====================================
-    def generate_main(self, task: str):
+    # ==========================================
+    # FASTAPI GENERATOR
+    # ==========================================
 
-        return '''#!/usr/bin/env python3
+    def generate_fastapi(self):
+        return """\
+#!/usr/bin/env python3
 from fastapi import FastAPI
 import uvicorn
 
@@ -70,11 +71,8 @@ def health():
 
 @app.get("/metrics")
 def metrics():
-    return {
-        "requests": 0,
-        "uptime": "0s"
-    }
+    return {"requests": 0, "uptime": "0s"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-'''
+"""

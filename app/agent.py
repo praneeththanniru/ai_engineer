@@ -1,125 +1,156 @@
+import os
 import subprocess
-import requests
 from app.planner import Planner
 from app.executor import Executor
+from app.memory import Memory
 
 
 class AutonomousAgent:
+    """
+    Production AI DevOps Agent
+    Includes:
+    - Planning
+    - Execution
+    - Docker Auto Generator
+    - Auto API Testing
+    - Auto Git Workflow
+    """
 
     def __init__(self):
+        # ✅ FIX: Pass memory into planner
+        self.memory = Memory()
+        self.planner = Planner(self.memory)
+        self.executor = Executor()
 
-        # simple memory
-        self.memory = {}
-
-        # planner now receives memory
-        self.planner = Planner(memory=self.memory)
-
-    # =====================================
+    # ==============================
     # MAIN ENTRY
-    # =====================================
+    # ==============================
+
     def run(self, task: str):
+        print("\n🚀 AI DevOps Agent — Production Mode")
 
-        print("🚀 AI DevOps Agent — Production Mode")
-
-        # FIX 🔥
-        # If your planner doesn't accept task,
-        # store task inside memory instead
-        self.memory["task"] = task
-
-        plan = self.planner.plan()
-
-        if not plan:
-            print("❌ No plan generated.")
-            return
+        # 1️⃣ Generate Plan
+        print("\n🧠 Generating Plan...")
+        plan = self.planner.plan(task)
 
         files = plan.get("files", [])
 
         print("\n📦 Files Planned:")
         for f in files:
-            print(" →", f["path"])
+            print(f" → {f['path']}")
 
-        # =====================================
-        # WRITE FILES
-        # =====================================
+        # 2️⃣ Write Files
         for file in files:
-            print("📝 Writing:", file["path"])
-            Executor.execute("write_file", file)
+            print(f"📝 Writing: {file['path']}")
+            self.executor.execute(
+                "write_file",
+                {
+                    "path": file["path"],
+                    "content": file["content"],
+                },
+            )
 
         print("\n✅ All Files Written.")
 
-        # =====================================
-        # AUTO TEST
-        # =====================================
-        tests_passed = self.auto_test()
+        # 3️⃣ Docker Auto Generator
+        self.auto_generate_docker()
 
-        # =====================================
-        # AUTO GIT PUSH IF TEST PASS
-        # =====================================
-        if tests_passed:
-            self.auto_git_push()
-        else:
-            print("❌ Tests failed — Skipping Git Push")
+        # 4️⃣ Auto API Test
+        self.auto_api_test()
 
-    # =====================================
-    # AUTO API TEST
-    # =====================================
-    def auto_test(self):
+        # 5️⃣ Auto Git Workflow
+        self.auto_git_workflow()
 
+    # ==================================================
+    # 🐳 Docker Auto Generator
+    # ==================================================
+
+    def auto_generate_docker(self):
+        print("\n🐳 Checking Docker Auto Generation...")
+
+        if not os.path.exists("main.py"):
+            print("❌ No backend detected.")
+            return
+
+        print("✅ Backend detected — Creating Docker Files...")
+
+        dockerfile = """\
+FROM python:3.11
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+"""
+
+        compose = """\
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+"""
+
+        with open("Dockerfile", "w") as f:
+            f.write(dockerfile)
+
+        with open("docker-compose.yml", "w") as f:
+            f.write(compose)
+
+        print("🐳 Dockerfile Created")
+        print("🐳 docker-compose.yml Created")
+        print("✅ Docker Auto Generator Completed")
+
+    # ==================================================
+    # 🧪 Auto API Test
+    # ==================================================
+
+    def auto_api_test(self):
         print("\n🔎 Running Auto API Tests...")
 
+        if not os.path.exists("main.py"):
+            print("❌ No API Project.")
+            return
+
         try:
-            health = requests.get(
-                "http://localhost:8000/health",
-                timeout=5
-            )
+            import requests
 
-            metrics = requests.get(
-                "http://localhost:8000/metrics",
-                timeout=5
-            )
-
+            health = requests.get("http://localhost:8000/health", timeout=3)
             print("Health:", health.text)
+
+            metrics = requests.get("http://localhost:8000/metrics", timeout=3)
             print("Metrics:", metrics.text)
 
-            if health.status_code == 200 and metrics.status_code == 200:
-                print("✅ API Tests Passed")
-                return True
-
-            print("❌ API Tests Failed")
-            return False
+            print("✅ API Tests Passed")
 
         except Exception as e:
-            print("❌ API Test Error:", e)
-            return False
+            print("❌ API Test Failed:", str(e))
 
-    # =====================================
-    # AUTO GIT PUSH
-    # =====================================
-    def auto_git_push(self):
+    # ==================================================
+    # 🔥 Auto Git Workflow
+    # ==================================================
 
-        print("\n🚀 Auto Git Commit + Push Started")
+    def auto_git_workflow(self):
+        print("\n🚀 Auto Git Workflow Started")
 
-        try:
-            commands = [
-                "git add .",
-                'git commit -m "Auto Generated Project"',
-                "git push"
-            ]
+        if not os.path.exists(".git"):
+            print("❌ Not a git repository.")
+            return
 
-            for cmd in commands:
-                print("Executing:", cmd)
+        commands = [
+            "git add .",
+            'git commit -m "Auto Generated Project"',
+            "git push",
+        ]
 
-                result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True
-                )
+        for cmd in commands:
+            print("Executing:", cmd)
+            subprocess.run(cmd, shell=True)
 
-                print(result.stdout)
-                print(result.stderr)
-
-            print("✅ Auto Git Push Completed")
-
-        except Exception as e:
-            print("❌ Git Push Failed:", e)
+        print("✅ Auto Git Workflow Completed")

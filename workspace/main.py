@@ -10,10 +10,7 @@ def health():
 
 @app.get("/metrics")
 def metrics():
-    return {
-        "requests": 0,
-        "uptime": "0s"
-    }
+    return {"requests": 0, "uptime": "0s"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
