@@ -14,7 +14,7 @@ class AutonomousAgent:
     - Execution
     - Docker Auto Generator
     - Auto API Testing
-    - Auto Semantic Versioning
+    - Smart Semantic Versioning (No Empty Releases)
     - Git Tag + Push
     """
 
@@ -28,7 +28,7 @@ class AutonomousAgent:
     # ==================================================
 
     def run(self, task: str):
-        print("\n🚀 AI DevOps Agent — Release Mode")
+        print("\n🚀 AI DevOps Agent — Smart Release Mode")
 
         print("\n🧠 Generating Plan...")
         plan = self.planner.plan(task)
@@ -120,12 +120,19 @@ services:
 
             print("✅ API Tests Passed")
 
-        except Exception as e:
+        except Exception:
             print("⚠ API not running yet (this is okay before deployment).")
 
     # ==================================================
-    # SEMANTIC VERSION ENGINE
+    # VERSION ENGINE
     # ==================================================
+
+    def has_changes(self):
+        result = subprocess.check_output(
+            ["git", "status", "--porcelain"]
+        ).decode().strip()
+
+        return bool(result)
 
     def get_latest_tag(self):
         try:
@@ -153,21 +160,25 @@ services:
         return f"v{major}.{minor}.{patch}"
 
     # ==================================================
-    # AUTO RELEASE WORKFLOW
+    # SMART RELEASE WORKFLOW
     # ==================================================
 
     def auto_git_release(self):
-        print("\n🚀 Starting Auto Release Workflow...")
+        print("\n🚀 Starting Smart Release Workflow...")
 
         if not os.path.exists(".git"):
             print("❌ Not a git repository.")
+            return
+
+        if not self.has_changes():
+            print("🛑 No changes detected. Skipping release.")
             return
 
         latest_tag = self.get_latest_tag()
 
         if latest_tag is None:
             new_version = "v0.1.0"
-            print("📦 No previous versions found. Initializing v0.1.0")
+            print("📦 Initializing first version:", new_version)
         else:
             new_version = self.bump_patch(latest_tag)
             print(f"📦 Latest version: {latest_tag}")
