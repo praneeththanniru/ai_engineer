@@ -57,6 +57,14 @@ Active development and architectural experimentation.
 
 ---
 
+## Connect
+
+- LinkedIn: [thanniru-praneeth](https://www.linkedin.com/in/thanniru-praneeth/)
+- Portfolio: [indivetlabs.com](https://www.indivetlabs.com)
+- Email: [thannirupraneeth3@gmail.com](mailto:thannirupraneeth3@gmail.com)
+
+---
+
 ## 👨‍💻 Author
 
 Praneeth Thanniru
