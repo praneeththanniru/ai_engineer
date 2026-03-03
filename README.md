@@ -1,47 +1,62 @@
 # AI Engineer – Autonomous Task Agent
 
-## Overview
-This project is a prototype autonomous AI agent designed to automate development and DevOps-related workflows using Large Language Models (LLMs).
+---
 
-The system explores how AI can assist in:
-- Code generation
-- Task automation
-- Environment management
-- Containerized workflows
+## 📌 Overview
+
+Experimental autonomous AI agent designed to automate development and DevOps workflows using Large Language Models (LLMs).
+
+This system explores task reasoning, execution orchestration, and containerized environments.
 
 ---
 
-## Tech Stack
+## 🏗 System Design
+
+Core Components:
+
+- main.py – Agent entry point
+- app/ – Modular core logic
+- workspace/ – Execution workspace
+- Dockerfile – Container configuration
+- docker-compose.yml – Multi-service orchestration
+
+---
+
+## 🛠 Tech Stack
+
 - Python
 - Docker
-- LLM Integration (experimental)
+- LLM Integration (Experimental)
 - Environment-based configuration (.env)
 
 ---
 
-## Project Structure
-- `main.py` – Entry point of the agent
-- `app/` – Core logic modules
-- `workspace/` – Agent execution workspace
-- `Dockerfile` – Container configuration
-- `docker-compose.yml` – Multi-service orchestration
+## ⚙️ Architecture Principles
+
+- Modular task orchestration
+- Containerized runtime
+- Configurable environment variables
+- Experimental autonomous reasoning workflow
 
 ---
 
-## Current Status
-🚧 Experimental Prototype (v0.1.x)
+## 🚧 Current Status
 
-This project is under active development and focuses on exploring autonomous AI workflows.
+Prototype Version: v0.1.x  
+Active development and architectural experimentation.
 
 ---
 
-## Future Improvements
-- LLM reasoning optimization
+## 🔮 Future Roadmap
+
+- Improved reasoning pipelines
 - Multi-agent collaboration
-- Task memory management
-- API integration
+- Persistent task memory
+- External API integrations
+- Advanced logging & monitoring
 
 ---
 
-## Author
+## 👨‍💻 Author
+
 Praneeth Thanniru
