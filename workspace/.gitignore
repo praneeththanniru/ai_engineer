@@ -1,8 +1,0 @@
-*.pyc
-__pycache__/
-database.db
-.vscode/settings.json
-debug.log
-.env
-workspace/*.json
-.DS_Store

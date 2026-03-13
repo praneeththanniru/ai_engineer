@@ -22,5 +22,7 @@
   "create a flask login system",
   "create a flask login system",
   "login system",
-  "Create a Flask app with /hello route that returns {\"message\": \"Hello from Antigravity Agent\"} in JSON"
+  "Create a Flask app with /hello route that returns {\"message\": \"Hello from Antigravity Agent\"} in JSON",
+  "Create a python file that prints Hello Antigravity",
+  "Create a simple Python script (NOT a web app) that prints \"Hello Antigravity\""
 ]

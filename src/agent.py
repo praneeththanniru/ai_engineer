@@ -1,3 +1,6 @@
+from task_filter import filter_tasks
+from llm_router import architect, coder, debugger, quick_edit
+
 #!/usr/bin/env python3
 import sys
 import os
@@ -130,7 +133,6 @@ app.app_context().push()
 # ========================== CONFIG ==========================
 DEBUG_ONLY = False  # True = skip running commands, False = execute
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "deepseek-coder:6.7b"
 
 BASE_DIR = Path(__file__).parent
 WORKSPACE = BASE_DIR / "workspace"
@@ -210,20 +212,24 @@ def prompt_hash(prompt):
     return hashlib.sha256(prompt.encode()).hexdigest()
 
 # ========================== MEMORY SYSTEM ==========================
-def save_memory(goal):
+
+def save_memory(entry):
     try:
         memory = json.loads(MEMORY_FILE.read_text())
     except:
         memory = []
-    memory.append(goal)
+
+    memory.append(entry)
+
     MEMORY_FILE.write_text(json.dumps(memory, indent=2))
+
 
 def load_memory():
     try:
         return json.loads(MEMORY_FILE.read_text())
     except:
         return []
-
+        
 # ========================== PROJECT STATE ==========================
 def load_project_state():
     try:
@@ -251,7 +257,7 @@ def add_task(task):
 
 def generate_tasks(goal):
     prompt = PLANNER_PROMPT + f"\nGoal:\n{goal}\nReturn task list."
-    response = call_llm(prompt)
+    response = architect(prompt)
     try:
         data = extract_json(response)
         tasks = data.get("tasks", [])[:10]
@@ -486,29 +492,44 @@ def run_commands(cmds, files):
 
 
 # ========================== AGENT LOOP ==========================
+
 def run_goal(goal):
-    save_tasks([])  
-    generate_tasks(goal)
+
+    from planner import create_plan
+    from task_filter import filter_tasks
+    from task_deduplicator import deduplicate_tasks
+    from dependency_graph import build_dependency_graph
+
+    save_tasks([])
+
+    tasks = create_plan(goal)
+    tasks = filter_tasks(tasks)
+    tasks = deduplicate_tasks(tasks)
+
+    save_tasks(tasks)
     tasks = load_tasks()
 
     while tasks:
+
         task = tasks.pop(0)
         save_tasks(tasks)
-        print(f"\n🧩 Executing task: {task}\n")
-        
-        # Ask the RAG knowledge base
-        knowledge_context = query_knowledge(task)
-        
-        workspace_state = scan_workspace()
 
+        print(f"\n🧩 Executing task: {task}\n")
+
+        knowledge_context = query_knowledge(task)
+
+        workspace_state = scan_workspace()
         workspace_summary = summarize_workspace()
         project_tree = build_project_tree()
         memory_state = load_memory()
+
+        deps = build_dependency_graph(WORKSPACE)
+
         full_prompt = SYSTEM_PROMPT + f"""
-        
+
 KNOWLEDGE BASE:
-{knowledge_context}        
-        
+{knowledge_context}
+
 TASK:
 {task}
 
@@ -518,6 +539,9 @@ PAST MEMORY:
 PROJECT STRUCTURE:
 {json.dumps(project_tree, indent=2)}
 
+DEPENDENCY GRAPH:
+{json.dumps(deps, indent=2)}
+
 WORKSPACE SUMMARY:
 {json.dumps(workspace_summary, indent=2)}
 
@@ -526,23 +550,83 @@ CURRENT FILE CONTENT:
 
 Return JSON only.
 """
+
         for attempt in range(MAX_RETRIES):
-            response = call_llm(full_prompt)
-            if not response: continue
+
+            response = coder(full_prompt)
+
+            if not response:
+                continue
+
             try:
                 data = extract_json(response)
                 break
-            except: time.sleep(2)
+
+            except:
+                time.sleep(2)
+
         else:
             print("❌ Model failed task. Skipping.")
             continue
+
         write_files(data.get("files", []))
-        error = run_commands(data.get("commands", []), data.get("files", []))
+
+        error = run_commands(
+            data.get("commands", []),
+            data.get("files", [])
+        )
+
+        # ================= Reflection =================
+
+        reflection_prompt = REFLECTION_PROMPT + f"""
+
+TASK:
+{task}
+
+ERROR:
+{error}
+
+Did the task succeed? If not explain the improvement needed.
+"""
+
+        try:
+
+            reflection_response = coder(reflection_prompt)
+            reflection_data = extract_json(reflection_response)
+
+            print("\n🧠 Reflection Result:")
+            print(reflection_data)
+
+        except:
+
+            reflection_data = {
+                "success": False,
+                "improvement": "Reflection failed"
+            }
+
+        save_memory({
+            "task": task,
+            "reflection": reflection_data
+        })
+
+        # ================= Research if error =================
+
         research_data = []
-        if error: research_data = research_topic(f"{task} python error {error}")
-        for g in data.get("goals", []): add_goal(g)
+
         if error:
+            research_data = research_topic(
+                f"{task} python error {error}"
+            )
+
+        for g in data.get("goals", []):
+            add_goal(g)
+
+        # ================= Debug if error =================
+
+        if error:
+
             print("\n🛠 Attempting automatic repair...\n")
+
             repair_prompt = DEBUGGER_PROMPT + f"""
 TASK:
 {task}
@@ -557,20 +641,64 @@ Fix the code using the research information.
 
 Return FULL JSON only.
 """
+
             for attempt in range(MAX_RETRIES):
-                repair_response = call_llm(repair_prompt)
-                if not repair_response: continue
+
+                repair_response = debugger(repair_prompt)
+
+                if not repair_response:
+                    continue
+
                 try:
+
                     repair_data = extract_json(repair_response)
+
                     write_files(repair_data.get("files", []))
-                    run_commands(repair_data.get("commands", []), repair_data.get("files", []))
+
+                    run_commands(
+                        repair_data.get("commands", []),
+                        repair_data.get("files", [])
+                    )
+
                     print("✅ Repair attempt executed.\n")
+
                     break
-                except: time.sleep(2)
+
+                except:
+
+                    time.sleep(2)
+
             else:
+
                 print("❌ Automatic repair failed for this task.\n")
-    save_memory(goal)
+
+    save_memory({
+        "goal_completed": goal
+    })
+
     print("\n✅ Goal completed.\n")
+    
+    # ===== Autonomous Goal Generator =====
+
+goal_prompt = GOAL_GENERATOR_PROMPT + f"""
+PROJECT STRUCTURE:
+{json.dumps(build_project_tree(), indent=2)}
+
+Suggest improvements for this project.
+"""
+
+try:
+    goal_response = coder(goal_prompt)
+    goal_data = extract_json(goal_response)
+
+    for g in goal_data.get("goals", []):
+        add_goal(g)
+
+    print("🧠 Generated new improvement goals.")
+
+except:
+    print("⚠️ Goal generation failed.")
+
 
 # ========================== MAIN LOOP ==========================
 def main():
@@ -626,128 +754,4 @@ def append_file(path, content):
     with open(path, "a") as f:
         f.write("\n" + content + "\n")
     print(f"📄 Appended to file: {path}")
-
-
-# -------------------------- Execute Plan --------------------------
-def execute_plan(plan):
-    print("\n⚙️ Executing plan...\n")
-
-    if "login system" in plan.lower():
-        # ----- Templates -----
-        login_html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Vet Login</title>
-</head>
-<body>
-    <h2>Veterinary Login</h2>
-    <form method="POST">
-        <input type="submit" value="Log in">
-    </form>
-</body>
-</html>"""
-
-        home_html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Home</title>
-</head>
-<body>
-    {% if current_user.is_authenticated %}
-        <p>Welcome, {{ current_user.id }}!</p>
-        <a href="/logout">Log out</a>
-    {% else %}
-        <p>Please log in to continue.</p>
-        <a href="/login">Log in</a>
-    {% endif %}
-</body>
-</html>"""
-
-        # Write templates
-        write_file("src/workspace/templates/login.html", login_html)
-        write_file("src/workspace/templates/home.html", home_html)
-
-        # ----- Flask Routes -----
-        login_route = """
-from flask import Flask, render_template, redirect, url_for, request, jsonify
-from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
-
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'supersecretkey'
-
-login_manager = LoginManager()
-login_manager.init_app(app)
-
-class User(UserMixin):
-    def __init__(self, id):
-        self.id = id
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User(user_id)
-
-@app.route('/')
-def home():
-    return render_template('home.html')
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        login_user(User('vet_dummy'))
-        return redirect(url_for('home'))
-    return render_template('login.html')
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('home'))
-"""
-
-        # Write main Flask file
-        flask_file = "src/workspace/indivet_app.py"
-        write_file(flask_file, login_route)
-
-        # ----- Add /hello route -----
-        hello_route = """
-@app.route('/hello', methods=['GET'])
-@login_required
-def hello():
-    return jsonify({"message": "Hello from Antigravity Agent"})
-"""
-        append_file(flask_file, hello_route)
-
-        # ----- Install dependencies -----
-        run_command("pip install flask flask_login")
-
-        # ----- Launch Flask safely -----
-        launch_flask_app("indivet_app.py")
-
-    print("\n✅ Execution finished")
-
-    
-# -------------------------- Run Task --------------------------
-def run_task(command):
-    print(f"\n🧠 Processing command: {command}")
-
-    # Here you would normally call your LLM:
-    # plan = call_llm(command)
-    # For now, just assume the plan is the command itself
-    run_goal(command)
-
-
-# -------------------------- Example Usage --------------------------
-if __name__ == "__main__":
-    while True:
-        print("\n🤖 Antigravity Agent Ready")
-        task = input("Enter your command: ")
-
-        if task.lower() in ["exit", "quit"]:
-            print("Agent shutting down...")
-            break
-
-        run_task(task)
-
    
