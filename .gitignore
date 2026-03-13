@@ -1,0 +1,25 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+*.env
+
+# Databases
+*.db
+
+# Workspace temporary outputs
+workspace/output/
+workspace/logs/
+workspace/*.json
+
+# MacOS files
+.DS_Store
+*.app
+
+# IDE configs
+.vscode/
+.idea/

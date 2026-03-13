@@ -1,0 +1,162 @@
+import os
+import requests
+
+SYSTEM_PROMPT = """
+You are Antigravity Autonomous Agent.
+
+STRICT RULES:
+- When using tools, respond ONLY with the tool block.
+- Do NOT add explanations before or after tool calls.
+- Available tools:
+  <write_file>
+  <read_file>
+  <list_files>
+"""
+
+# =========================
+# 🔧 TOOL FUNCTIONS
+# =========================
+
+def write_file(path, content):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"✅ File written: {path}"
+    except Exception as e:
+        return f"❌ Write failed: {e}"
+
+
+def read_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"❌ Read failed: {e}"
+
+
+def list_files(path="."):
+    try:
+        items = os.listdir(path)
+        if not items:
+            return "📂 Folder is empty."
+        return "\n".join(sorted(items))
+    except Exception as e:
+        return f"❌ List failed: {e}"
+
+
+# =========================
+# 🧠 TOOL PARSER (ROBUST)
+# =========================
+
+def handle_tools(text):
+    text = text.strip()
+
+    # WRITE FILE
+    if "<write_file>" in text:
+        try:
+            block = text.split("<write_file>")[1].split("</write_file>")[0]
+            lines = block.strip().split("\n")
+
+            path_line = lines[0]
+            path = path_line.replace("path:", "").strip()
+
+            content_index = lines.index("content:")
+            content = "\n".join(lines[content_index + 1:])
+
+            return write_file(path, content)
+        except Exception as e:
+            return f"❌ Failed to parse write_file: {e}"
+
+    # READ FILE
+    if "<read_file>" in text:
+        try:
+            block = text.split("<read_file>")[1].split("</read_file>")[0]
+            path = block.replace("path:", "").strip()
+            return read_file(path)
+        except Exception as e:
+            return f"❌ Failed to parse read_file: {e}"
+
+    # LIST FILES
+    if "<list_files>" in text:
+        try:
+            block = text.split("<list_files>")[1].split("</list_files>")[0]
+            path = block.replace("path:", "").strip()
+            if not path:
+                path = "."
+            return list_files(path)
+        except Exception as e:
+            return f"❌ Failed to parse list_files: {e}"
+
+    return None
+
+
+# =========================
+# 🤖 LLM CALL
+# =========================
+
+def call_llm(user_input):
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_input},
+                ],
+                "temperature": 0,
+            },
+            timeout=60,
+        )
+
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        return f"❌ LLM call failed: {e}"
+
+
+# =========================
+# 🚀 MAIN LOOP
+# =========================
+
+def main():
+    print("Antigravity Autonomous Agent Ready 🚀")
+
+    while True:
+        try:
+            user_input = input("\nYou > ").strip()
+            if not user_input:
+                continue
+
+            print("Thinking...")
+
+            llm_output = call_llm(user_input)
+
+            # Try to execute tools
+            tool_result = handle_tools(llm_output)
+
+            if tool_result:
+                print("\nAgent >")
+                print(tool_result)
+            else:
+                print("\nAgent >")
+                print(llm_output)
+
+        except KeyboardInterrupt:
+            print("\n👋 Exiting agent.")
+            break
+        except Exception as e:           print(f"\n❌ Error: {e}")
+
+
+# =========================
+# ▶️ ENTRY POINT
+# =========================
+
+if __name__ == "__main__":
+    main()
