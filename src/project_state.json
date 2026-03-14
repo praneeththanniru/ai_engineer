@@ -1,7 +1,1 @@
-{
-  "current_goal": "Create a Flask app with /hello route that returns {\"message\": \"Hello from Antigravity Agent!\"} in JSON",
-  "remaining_tasks": [
-    "Document the code and process",
-    "Prepare presentation for the project completion"
-  ]
-}
+{}
