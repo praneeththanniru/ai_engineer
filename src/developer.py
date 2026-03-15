@@ -1,4 +1,7 @@
-from llm_router import developer
+# src/developer.py
+
+from llm_router import coder
+
 
 def write_code(task):
 
@@ -11,4 +14,4 @@ Task:
 Return only code.
 """
 
-    return developer(prompt)
+    return coder(prompt)

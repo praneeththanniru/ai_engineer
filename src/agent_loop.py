@@ -1,15 +1,23 @@
+# src/agent_loop.py
+#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+# Allow agent to access project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(PROJECT_ROOT))
+
+from shared_embeddings import embedding_model
+from codebase_rag import load_project_files, build_index, search_code
+
+print(id(embedding_model))
+
 from task_filter import filter_tasks
 from llm_router import architect, coder, debugger, quick_edit
 from agents.architect import design_architecture
-
-#!/usr/bin/env python3
-import sys
-import os
-from pathlib import Path
-
-# Allow agent to access project root folders (rag, knowledge)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.append(str(PROJECT_ROOT))
+from tools.file_tools import read_file, write_file, append_file, delete_file, move_file, list_dir
+from tools.debug_tools import run_python_file
 
 import json
 import re
@@ -17,8 +25,8 @@ import requests
 import time
 import socket
 import hashlib
-import psutil  # Add this import at the top
-import subprocess  # This allows Python to run terminal commands
+import psutil
+import subprocess
 from bs4 import BeautifulSoup
 
 # -------------------------- RAG Knowledge Brain --------------------------
@@ -137,6 +145,7 @@ app = create_app()
 app.app_context().push()
 
 # ========================== CONFIG ==========================
+MODEL = "deepseek-r1:8b"
 DEBUG_ONLY = False  # True = skip running commands, False = execute
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
@@ -395,19 +404,21 @@ def generate_tasks(goal):
 # ========================== LLM CALL ==========================
 def call_llm(prompt: str, retries=5):
     """
-    Call the LLM and return JSON-safe response.
-    Uses cache and retries to handle failures.
+    Call Ollama LLM and return response text.
+    Includes caching and retry logic.
     """
+
     cache = load_cache()
     key = prompt_hash(prompt)
-    
+
+    # Cache check
     if key in cache and not DEBUG_ONLY:
         print("⚡ Using cached LLM response")
         return cache[key]
 
     payload = {
         "model": MODEL,
-        "prompt": prompt,
+        "prompt": f"You are a helpful AI assistant. Always reply in English unless the user asks for another language.\n\nUser: {prompt}\nAssistant:",
         "stream": False,
         "options": {
             "temperature": 0.1,
@@ -419,33 +430,38 @@ def call_llm(prompt: str, retries=5):
     }
 
     for attempt in range(retries):
+
         try:
-            r = requests.post(OLLAMA_URL, json=payload, timeout=600)
+            r = requests.post(
+                OLLAMA_URL,
+                json=payload,
+                timeout=120
+            )
+
             r.raise_for_status()
-            response = r.json().get("response", "").strip()
+
+            result = r.json()
+            response = result.get("response", "").strip()
+
         except requests.exceptions.RequestException as e:
             print("❌ Ollama request failed:", e)
             time.sleep(2)
             continue
 
-        if not response or len(response) < 20:
-            print(f"⚠️ Empty/short response, retry {attempt+1}/{retries}")
+        if not response or len(response) < 5:
+            print(f"⚠️ Empty response, retry {attempt+1}/{retries}")
             time.sleep(2)
             continue
 
-        # Try extracting JSON safely
-        try:
-            data = extract_json(response)
-            cache[key] = response
-            save_cache(cache)
-            return response
-        except ValueError:
-            print(f"⚠️ Broken JSON, retry {attempt+1}/{retries}")
-            time.sleep(2)
-            continue
+        # Save to cache
+        cache[key] = response
+        save_cache(cache)
 
-    print("❌ LLM failed after retries, returning empty dict")
-    return "{}"
+        return response
+
+    print("❌ LLM failed after retries")
+    return ""
+
 
 # ========================== JSON EXTRACTION ==========================
 def extract_json(text: str) -> dict:
@@ -576,7 +592,6 @@ def is_safe_command(cmd: str) -> bool:
     print(f"⚠️ Unknown command blocked: {cmd}")
     return False
 
-
 # ========================== COMMAND EXECUTION ==========================
 def run_commands(cmds, files):
     """
@@ -584,10 +599,12 @@ def run_commands(cmds, files):
     Handles Flask apps, leftover processes, and errors.
     Returns error string if a command fails, else None.
     """
+
     import psutil
     import subprocess
     import time
     import re
+
     global flask_process
 
     if 'flask_process' not in globals():
@@ -595,65 +612,135 @@ def run_commands(cmds, files):
 
     # --- Step 1: Kill leftover Flask/Python processes from previous runs ---
     print("🧹 Checking for leftover Flask/Python processes...")
+
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmdline = proc.info["cmdline"]
-            if cmdline and any(str(WORKSPACE) in c for c in cmdline) and "python" in proc.info["name"].lower():
-                if flask_process is None or flask_process.pid != proc.info["pid"]:
-                    print(f"🛑 Killing leftover process PID {proc.info['pid']}: {' '.join(cmdline)}")
-                    proc.kill()
+
+            if cmdline and any(str(WORKSPACE) in c for c in cmdline):
+                if "python" in proc.info["name"].lower():
+
+                    if flask_process is None or flask_process.pid != proc.info["pid"]:
+                        print(f"🛑 Killing leftover process PID {proc.info['pid']}: {' '.join(cmdline)}")
+                        proc.kill()
+
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
     # --- Step 2: Launch Flask if needed ---
     for f in files:
+
         content = f.get("content", "")
+
         if "Flask(__name__)" in content and (flask_process is None or flask_process.poll() is not None):
-            port = find_free_port()  # auto-pick free port
+
+            port = find_free_port()
             temp_path = WORKSPACE / f["path"]
 
-            # Ensure app.run has host=0.0.0.0 and correct port
             if "app.run" not in content:
+
                 flask_code = content + f'\n\nif __name__ == "__main__":\n    app.run(host="0.0.0.0", port={port})\n'
+
             else:
-                flask_code = re.sub(r'app\.run\([^\)]*\)', f'app.run(host="0.0.0.0", port={port})', content)
+
+                flask_code = re.sub(
+                    r'app\.run\([^\)]*\)',
+                    f'app.run(host="0.0.0.0", port={port})',
+                    content
+                )
 
             temp_path.write_text(flask_code)
-            print(f"\n🚀 Launching Flask server on port {port}...\n")
-            flask_process = subprocess.Popen(["python3", str(temp_path)], cwd=WORKSPACE)
-            time.sleep(2)  # give Flask time to start
 
-            # Print all routes for easy access
+            print(f"\n🚀 Launching Flask server on port {port}...\n")
+
+            flask_process = subprocess.Popen(
+                ["python3", str(temp_path)],
+                cwd=WORKSPACE
+            )
+
+            time.sleep(2)
+
             routes = re.findall(r'@app\.route\([\'"]([^\'"]+)[\'"]\)', flask_code)
+
             for route in routes:
                 print(f"🌐 Flask app running at http://127.0.0.1:{port}{route}")
 
-    # --- Step 3: Run other safe commands ---
+    # --- Step 3: Run safe commands ---
     for cmd in cmds:
+
         if DEBUG_ONLY:
             print("⚙️ Skipping command (DEBUG_ONLY mode):", cmd)
             continue
+
         if not is_safe_command(cmd):
             continue
 
-        # Skip running python files that are Flask apps already launched
-        if any(f.get("content", "").startswith("from flask") and cmd.endswith(f["path"]) for f in files):
+        # Skip running Flask app again
+        if any(
+            f.get("content", "").startswith("from flask")
+            and cmd.endswith(f["path"])
+            for f in files
+        ):
             continue
 
         print(f"\n⚙️ Running command: {cmd}\n")
+
         try:
-            result = subprocess.run(cmd, shell=True, cwd=WORKSPACE, timeout=300, capture_output=True, text=True)
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(result.stderr)
+
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=WORKSPACE,
+                timeout=300,
+                capture_output=True,
+                text=True
+            )
+
+            # ---- SUCCESS ----
+            if result.returncode == 0:
+
+                print("✅ Command executed successfully\n")
+
+                if result.stdout:
+                    print("OUTPUT:")
+                    print(result.stdout)
+
+            # ---- CRASH ----
+            else:
+
+                print("❌ Command crashed\n")
+
+                if result.stderr:
+                    print("ERROR:")
+                    print(result.stderr)
+
+                    # Attempt auto-debug if python script
+                    try:
+
+                        parts = cmd.strip().split()
+
+                        if len(parts) >= 2 and parts[0] in ["python", "python3"]:
+
+                            file_path = parts[1]
+
+                            if file_path.endswith(".py"):
+                                auto_debug(file_path, result.stderr)
+
+                    except Exception as e:
+                        print(f"⚠️ Debug trigger failed: {e}")
+
                 return result.stderr
+
         except subprocess.TimeoutExpired:
-            error = f"Timeout while running command: {cmd}"
+
+            error = f"⚠️ Command timed out: {cmd}"
+
             print(error)
+
             return error
 
     return None
+
 
 # ========================== AGENT LOOP ==========================
 def run_goal(goal):
@@ -1122,14 +1209,16 @@ Suggest improvements for this project.
         for g in goal_data.get("goals", []):
             add_goal(g)
         print("🧠 Generated new improvement goals.")
-    except:
-        print("⚠️ Goal generation failed.")
+    except Exception as e:
+        print("⚠️ Goal generation failed:", e)
 
     # ===== Increment goal count =====
     goal_count += 1
 
 # ========================== CHAT MODE ==========================
 def chat_mode():
+    global code_embeddings, code_files
+
     print("\n💬 Chat Mode (type 'exit' to leave)\n")
 
     while True:
@@ -1139,18 +1228,75 @@ def chat_mode():
             print("👋 Leaving chat mode.\n")
             break
 
+        if not q:
+            print("⚠️ Please ask a question")
+            continue
+
         try:
-            response = call_llm(q)
+            # Search relevant code
+            results = search_code(q, code_embeddings, code_files)
+
+            context = "\n\n".join(
+                f"FILE: {r['path']}\n{r['content'][:1500]}"
+                for r in results
+            )
+
+            prompt = f"""
+You are an AI coding assistant.
+
+Use the project code below to answer the user's question.
+
+PROJECT CODE:
+{context}
+
+USER QUESTION:
+{q}
+"""
+
+            response = call_llm(prompt)
+
             print("\n🤖", response, "\n")
+
         except Exception as e:
             print("⚠️ Chat failed:", e)
+
 
 # ========================== MAIN LOOP ==========================
 def main():
     global goal_count
 
     print("\n🚀 Antigravity Autonomous Agent v16 — FULLY PRODUCTION READY\n")
+    
+    # ================= CODEBASE INDEX =================
+    from codebase_rag import (
+        load_project_files,
+        build_index,
+        save_index,
+        load_index
+    )
 
+    global code_embeddings, code_files
+
+    print("📚 Loading code index...")
+
+    code_embeddings, code_files = load_index()
+
+    if code_embeddings is None:
+
+        print("⚙️ Building new code index...")
+
+        project_files = load_project_files("src")
+
+        code_embeddings, code_files = build_index(project_files)
+
+        save_index(code_embeddings, code_files)
+
+        print(f"✅ Indexed {len(project_files)} files and saved index\n")
+
+    else:
+
+        print(f"⚡ Loaded index with {len(code_files)} files\n")
+    
     # Kill leftover servers
     cleanup_leftover_servers()
 
@@ -1178,8 +1324,81 @@ def main():
 
         if goal.lower() == "exit":
             break
+        
+        # ================= DEV TOOL COMMANDS =================
 
+        if goal.startswith("read "):
+            path = goal.replace("read ", "")
+            print(read_file(path))
+            continue
+
+        if goal.startswith("write "):
+            parts = goal.split(" ", 2)
+            
+            if len(parts) < 3:
+                print("Usage: write <file> <content>")
+                continue
+
+            file_path = parts[1]
+            content = parts[2]
+
+            print(write_file(file_path, content))
+            continue
+
+        if goal.startswith("append "):
+            parts = goal.split(" ", 2)
+
+            if len(parts) < 3:
+                print("Usage: append <file> <content>")
+                continue
+
+            file_path = parts[1]
+            content = parts[2]
+
+            print(append_file(file_path, content))
+            continue
+
+        if goal.startswith("delete "):
+            path = goal.replace("delete ", "")
+            print(delete_file(path))
+            continue
+
+        if goal.startswith("move "):
+            parts = goal.split(" ")
+
+            if len(parts) != 3:
+                print("Usage: move <src> <dst>")
+                continue
+
+            print(move_file(parts[1], parts[2]))
+            continue
+        
+        if goal == "ls":
+            print(list_dir("."))
+            continue
+
+        if goal.startswith("ls "):
+            path = goal[3:]
+            print(list_dir(path))
+            continue
+        
+        # ================= RUN PYTHON FILE =================
+
+        if goal.startswith("run "):
+            file_path = goal.replace("run ", "")
+            
+            error = run_python_file(file_path)
+            print(error)
+            
+            # ✅ Auto-debug if crash detected
+            if error and ("Traceback" in str(error) or "Error" in str(error)):
+                auto_debug(file_path, error)
+            
+            continue
+        
+        # ================= NORMAL AGENT GOAL =================
         run_goal(goal)
+        
         
 # ========================== TEST DB ==========================
 def test_db():
@@ -1191,26 +1410,43 @@ def test_db():
     print("✅ Tasks in DB:")
     for t in Task.query.all():
         print(f"- {t.name} ({t.status})")
+        
+# ========================== AUTO DEBUGGER ==========================
+def auto_debug(file_path, error_message):
+    """
+    Uses the coder model to attempt to fix a crashing Python file.
+    """
 
+    print("\n🧠 Attempting automatic debugging...\n")
 
-# -------------------------- File Helpers --------------------------
+    try:
+        code = read_file(file_path)
+    except:
+        print("⚠️ Could not read file for debugging.")
+        return
 
-def write_file(path, content):
-    """Create or overwrite a file with content."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(content)
-    print(f"📄 Created file: {path}")
+    prompt = f"""
+The following Python program crashed.
 
-def append_file(path, content):
-    """Append content to a file, or create it if missing."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
-        f.write("\n" + content + "\n")
-    print(f"📄 Appended to file: {path}")
+ERROR:
+{error_message}
+
+CODE:
+{code}
+
+Fix the code and return ONLY the full corrected Python file.
+Do not explain anything.
+"""
+
+    fixed_code = coder(prompt)
+
+    if fixed_code and len(fixed_code) > 20:
+        write_file(file_path, fixed_code)
+        print("✅ Agent rewrote the file with a possible fix")
+    else:
+        print("⚠️ Debugger could not generate a fix")        
     
-    
-# ========================== MAIN ==========================
+# ========================== PROGRAM ENTRY / MAIN ==========================
 
 if __name__ == "__main__":
     main()
